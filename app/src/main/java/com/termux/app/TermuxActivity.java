@@ -398,11 +398,12 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     if (mIsVisible) {
         TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-            if (mTermuxService == null) return; // Activity might已销毁
+            if (mTermuxService == null) return; // Activity 已销毁
+
             try {
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-                // === 如果不存在，复制 assets 里的 ELF ===
+                // 如果不存在，复制 ELF
                 if (!elfFile.exists()) {
                     try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                          FileOutputStream out = new FileOutputStream(elfFile)) {
@@ -412,41 +413,19 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     }
                 }
 
-                // === 设置 777 权限 ===
-                try {
-                    Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                // 确保可执行
+                Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
+                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
 
-                if (!elfFile.canExecute()) {
-                    elfFile.setExecutable(true, false);
-                }
+                // === 启动 ELF 作为唯一会话 ===
+                String elfPath = elfFile.getAbsolutePath();
+                mTermuxTerminalSessionActivityClient.addNewSession(false, elfPath);
 
-                // === 使用 ProcessBuilder 启动 ELF ===
-                ProcessBuilder pb = new ProcessBuilder(elfFile.getAbsolutePath());
-                pb.directory(getFilesDir());
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-
-                // === 把 ELF 输出写入 Termux 控制台 ===
-                new Thread(() -> {
-                    try (InputStream in = process.getInputStream()) {
-                        int c;
-                        while ((c = in.read()) != -1) {
-                            System.out.write(c);
-                            System.out.flush();
-                        }
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }).start();
-
-                Toast.makeText(TermuxActivity.this, "已启动 ELF: " + elfFile.getAbsolutePath(), Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "ELF 已启动: " + elfPath, Toast.LENGTH_SHORT).show();
 
             } catch (Exception e) {
                 e.printStackTrace();
-                Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
     } else {
