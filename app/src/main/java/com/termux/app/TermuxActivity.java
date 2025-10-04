@@ -381,18 +381,17 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
-    Logger.logDebug(LOG_TAG, "onServiceConnected");
-
     mTermuxService = ((TermuxService.LocalBinder) service).service;
     setTermuxSessionsListView();
 
     if (mIsVisible) {
         TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-            if (mTermuxService == null) return; // Activity 已销毁
+            if (mTermuxService == null) return;
+
             try {
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-                // === 检查并复制 ELF ===
+                // 如果 ELF 不存在，从 assets 复制
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -403,35 +402,35 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // === 设置 777 权限 ===
-                try {
-                    Runtime.getRuntime().exec(new String[]{
-                        "chmod", "777", elfFile.getAbsolutePath()
-                    }).waitFor();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-
-                // === 确认 ELF 可执行 ===
+                // 设置可执行权限
+                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
 
-                // === 用 TerminalSession 启动 ELF，确保输出显示到 Termux 窗口 ===
                 String elfPath = elfFile.getAbsolutePath();
 
+                // 创建 TerminalSession
+                String[] args = new String[]{};
+                String[] env = new String[]{
+                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
+                        "HOME=" + getFilesDir().getAbsolutePath(),
+                        "TMPDIR=" + getCacheDir().getAbsolutePath()
+                };
+
                 TerminalSession session = new TerminalSession(
-                        elfPath,                                // 命令
+                        elfPath,                                // 可执行路径
                         getFilesDir().getAbsolutePath(),        // 工作目录
-                        null,                                   // 环境变量
-                        mTermuxTerminalSessionActivityClient    // 回调接口
+                        args,                                   // 启动参数
+                        env,                                    // 环境变量
+                        null,                                   // 行数自动
+                        mTermuxTerminalSessionActivityClient    // 回调
                 );
 
-                mTermuxService.addNewSession(session);
+                // 设置为当前会话，让输出显示在 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
-                e.printStackTrace();
                 Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
@@ -441,6 +440,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
