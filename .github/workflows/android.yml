@@ -10,23 +10,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 拉取源码
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 配置 JDK 17（Termux 代码推荐用 17）
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
+      # 安装 Android SDK
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Gradle Build
+      # 构建 APK
+      - name: Build with Gradle
         run: ./gradlew assembleDebug
 
+      # 上传 APK 到 Artifact
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: termux-app
+          name: termux-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
