@@ -390,6 +390,8 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
             try {
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
+
+                // 如果 ELF 不存在，从 assets 复制
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -400,11 +402,21 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 设置执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
+                // 设置可执行权限
+                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
+
+                // su 路径和 ELF 路径
+                String suPath = "su";
+                String elfPath = elfFile.getAbsolutePath();
+
+                // su 参数（必须分开，不要拼接成一个字符串）
+                String[] suArgs = new String[]{
+                        "-c",
+                        elfPath
+                };
 
                 // 环境变量
                 String[] env = new String[]{
@@ -413,17 +425,17 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // === 关键：用 su -c 包装 ELF ===
+                // 创建 su -c ELF 的终端会话
                 TerminalSession session = new TerminalSession(
-                        "su",                                // 执行 su
-                        "/",                                 // root 环境下随意
-                        new String[]{"-c", "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced"},
+                        suPath,                                // 可执行文件是 su
+                        "/",                                   // 工作目录随便，/ 就行
+                        suArgs,                                // 参数: {"-c", "/data/.../ELF"}
                         env,
                         null,
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // 绑定到 Termux 窗口
+                // 设置为当前会话，让输出显示在 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
@@ -436,7 +448,6 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
-
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
