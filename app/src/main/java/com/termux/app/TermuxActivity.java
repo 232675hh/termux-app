@@ -379,16 +379,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
 
-
-
-
-    /**
-     * Part of the {@link ServiceConnection} interface. The service is bound with
-     * {@link #bindService(Intent, ServiceConnection, int)} in {@link #onCreate(Bundle)} which will cause a call to this
-     * callback method.
-     */
-// ===== 省略前面的 import 保持不动 =====
-
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
     Logger.logDebug(LOG_TAG, "onServiceConnected");
@@ -399,33 +389,50 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
     if (mIsVisible) {
         TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
             if (mTermuxService == null) return; // Activity 已销毁
-
             try {
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-                // 如果不存在，复制 ELF
+                // === 检查并复制 ELF ===
                 if (!elfFile.exists()) {
-                    try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
-                         FileOutputStream out = new FileOutputStream(elfFile)) {
-                        byte[] buf = new byte[8192];
-                        int len;
-                        while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
-                    }
+                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                    FileOutputStream out = new FileOutputStream(elfFile);
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                    in.close();
+                    out.close();
                 }
 
-                // 确保可执行
-                Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
-                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
+                // === 设置 777 权限 ===
+                try {
+                    Runtime.getRuntime().exec(new String[]{
+                        "chmod", "777", elfFile.getAbsolutePath()
+                    }).waitFor();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
 
-                // === 启动 ELF 作为唯一会话 ===
+                // === 确认 ELF 可执行 ===
+                if (!elfFile.canExecute()) {
+                    elfFile.setExecutable(true, false);
+                }
+
+                // === 用 TerminalSession 启动 ELF，确保输出显示到 Termux 窗口 ===
                 String elfPath = elfFile.getAbsolutePath();
-                mTermuxTerminalSessionActivityClient.addNewSession(false, elfPath);
 
-                Toast.makeText(this, "ELF 已启动: " + elfPath, Toast.LENGTH_SHORT).show();
+                TerminalSession session = new TerminalSession(
+                        elfPath,                                // 命令
+                        getFilesDir().getAbsolutePath(),        // 工作目录
+                        null,                                   // 环境变量
+                        mTermuxTerminalSessionActivityClient    // 回调接口
+                );
+
+                mTermuxService.addNewSession(session);
+                mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
                 e.printStackTrace();
-                Toast.makeText(this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
     } else {
