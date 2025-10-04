@@ -403,19 +403,16 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 }
 
                 // 设置可执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
 
-                // su 路径和 ELF 路径
-                String suPath = "su";
-                String elfPath = elfFile.getAbsolutePath();
-
-                // su 参数（必须分开，不要拼接成一个字符串）
-                String[] suArgs = new String[]{
+                // === root 启动 ELF ===
+                String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
+                String[] args = new String[]{
                         "-c",
-                        elfPath
+                        "exec " + elfPath   // 用 exec 替换 su shell 避免子进程被回收
                 };
 
                 // 环境变量
@@ -425,17 +422,17 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // 创建 su -c ELF 的终端会话
+                // 创建 su -c exec ELF 会话
                 TerminalSession session = new TerminalSession(
-                        suPath,                                // 可执行文件是 su
-                        "/",                                   // 工作目录随便，/ 就行
-                        suArgs,                                // 参数: {"-c", "/data/.../ELF"}
-                        env,
-                        null,
+                        "su",                          // 主命令
+                        "/",                           // 工作目录
+                        args,                          // 参数
+                        env,                           // 环境
+                        null,                          // 行数自动
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // 设置为当前会话，让输出显示在 Termux 窗口
+                // 让输出显示在 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
@@ -448,6 +445,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
