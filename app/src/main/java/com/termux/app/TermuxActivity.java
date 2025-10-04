@@ -412,7 +412,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
                 String[] args = new String[]{
                         "-c",
-                        "exec " + elfPath   // 用 exec 替换 su shell 避免子进程被回收
+                        "sh -c 'exec " + elfPath + "'"
                 };
 
                 // 环境变量
@@ -422,13 +422,13 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // 创建 su -c exec ELF 会话
+                // 创建 su -c "sh -c 'exec ELF'" 会话
                 TerminalSession session = new TerminalSession(
-                        "su",                          // 主命令
-                        "/",                           // 工作目录
-                        args,                          // 参数
-                        env,                           // 环境
-                        null,                          // 行数自动
+                        "su",
+                        "/",
+                        args,
+                        env,
+                        null,
                         mTermuxTerminalSessionActivityClient
                 );
 
@@ -445,7 +445,6 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
-
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
