@@ -408,9 +408,30 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     elfFile.setExecutable(true, false);
                 }
 
-                String elfPath = elfFile.getAbsolutePath();
+                // 先检测 su 是否可用
+                boolean rootOk = false;
+                try {
+                    Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
+                    int exit = p.waitFor();
+                    if (exit == 0) {
+                        byte[] buf = new byte[128];
+                        int n = p.getInputStream().read(buf);
+                        if (n > 0) {
+                            String out = new String(buf, 0, n);
+                            if (out.contains("uid=0")) rootOk = true;
+                        }
+                    }
+                } catch (Exception ignored) {}
 
-                // 创建 TerminalSession
+                if (!rootOk) {
+                    runOnUiThread(() -> 
+                        Toast.makeText(TermuxActivity.this, "必须 root 才能运行 ELF，请检查 su 授权", Toast.LENGTH_LONG).show()
+                    );
+                    return;
+                }
+
+                // === 构造 TerminalSession，命令用 su -c 执行 ELF ===
+                String elfPath = elfFile.getAbsolutePath();
                 String[] args = new String[]{};
                 String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
@@ -419,15 +440,15 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 };
 
                 TerminalSession session = new TerminalSession(
-                        elfPath,                                // 可执行路径
-                        getFilesDir().getAbsolutePath(),        // 工作目录
-                        args,                                   // 启动参数
-                        env,                                    // 环境变量
-                        null,                                   // 行数自动
-                        mTermuxTerminalSessionActivityClient    // 回调
+                        "/system/bin/sh",                      // shell
+                        getFilesDir().getAbsolutePath(),       // 工作目录
+                        new String[]{"-c", "su -c '" + elfPath + "'"}, // 参数
+                        env,
+                        null,
+                        mTermuxTerminalSessionActivityClient
                 );
 
-                // 设置为当前会话，让输出显示在 Termux 窗口
+                // 显示到 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
@@ -440,6 +461,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
     @Override
