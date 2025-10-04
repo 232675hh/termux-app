@@ -392,16 +392,15 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
     Logger.logDebug(LOG_TAG, "onServiceConnected");
 
     mTermuxService = ((TermuxService.LocalBinder) service).service;
-
     setTermuxSessionsListView();
 
     if (mIsVisible) {
         TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-            if (mTermuxService == null) return; // Activity might have been destroyed.
+            if (mTermuxService == null) return; // Activity might已销毁
             try {
-                // === 自定义：始终运行 ELF ===
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
+                // === 检查并复制 ELF ===
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -410,15 +409,30 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
                     in.close();
                     out.close();
-                    elfFile.setExecutable(true);
                 }
 
-                // 启动 ELF 作为唯一 session
-                String cmd = elfFile.getAbsolutePath();
+                // === 设置 777 权限 ===
+                try {
+                    Runtime.getRuntime().exec(new String[]{
+                        "chmod", "777", elfFile.getAbsolutePath()
+                    }).waitFor();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                // === 确认 ELF 可执行 ===
+                if (!elfFile.canExecute()) {
+                    elfFile.setExecutable(true, false);
+                }
+
+                // === 执行 ELF，通过 shell 启动并显示输出 ===
+                String elfPath = elfFile.getAbsolutePath();
+                String cmd = "/data/data/com.termux/files/usr/bin/sh -c '" + elfPath + "'";
                 mTermuxTerminalSessionActivityClient.addNewSession(false, cmd);
 
             } catch (Exception e) {
                 e.printStackTrace();
+                Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
     } else {
