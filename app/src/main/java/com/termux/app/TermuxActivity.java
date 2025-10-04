@@ -383,51 +383,61 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      * {@link #bindService(Intent, ServiceConnection, int)} in {@link #onCreate(Bundle)} which will cause a call to this
      * callback method.
      */
-    @Override
-    public void onServiceConnected(ComponentName componentName, IBinder service) {
-        Logger.logDebug(LOG_TAG, "onServiceConnected");
+@Override
+public void onServiceConnected(ComponentName componentName, IBinder service) {
+    Logger.logDebug(LOG_TAG, "onServiceConnected");
 
-        mTermuxService = ((TermuxService.LocalBinder) service).service;
+    mTermuxService = ((TermuxService.LocalBinder) service).service;
 
-        setTermuxSessionsListView();
+    setTermuxSessionsListView();
 
-        final Intent intent = getIntent();
-        setIntent(null);
+    final Intent intent = getIntent();
+    setIntent(null);
 
-        if (mTermuxService.isTermuxSessionsEmpty()) {
-            if (mIsVisible) {
-                TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-                    if (mTermuxService == null) return; // Activity might have been destroyed.
-                    try {
-                        boolean launchFailsafe = false;
-                        if (intent != null && intent.getExtras() != null) {
-                            launchFailsafe = intent.getExtras().getBoolean(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
-                        }
-                        mTermuxTerminalSessionActivityClient.addNewSession(launchFailsafe, null);
-                    } catch (WindowManager.BadTokenException e) {
-                        // Activity finished - ignore.
+    if (mTermuxService.isTermuxSessionsEmpty()) {
+        if (mIsVisible) {
+            TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
+                if (mTermuxService == null) return; // Activity might have been destroyed.
+                try {
+                    // === 改动：不再启动 bash，而是启动 ELF ===
+                    File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
+
+                    if (!elfFile.exists()) {
+                        InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                        FileOutputStream out = new FileOutputStream(elfFile);
+                        byte[] buf = new byte[8192];
+                        int len;
+                        while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                        in.close();
+                        out.close();
+                        elfFile.setExecutable(true);
                     }
-                });
-            } else {
-                // The service connected while not in foreground - just bail out.
-                finishActivityIfNotFinishing();
-            }
-        } else {
-            // If termux was started from launcher "New session" shortcut and activity is recreated,
-            // then the original intent will be re-delivered, resulting in a new session being re-added
-            // each time.
-            if (!mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
-                // Android 7.1 app shortcut from res/xml/shortcuts.xml.
-                boolean isFailSafe = intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
-                mTermuxTerminalSessionActivityClient.addNewSession(isFailSafe, null);
-            } else {
-                mTermuxTerminalSessionActivityClient.setCurrentSession(mTermuxTerminalSessionActivityClient.getCurrentStoredSessionOrLast());
-            }
-        }
 
-        // Update the {@link TerminalSession} and {@link TerminalEmulator} clients.
-        mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
+                    // 创建一个 Termux session，并把 ELF 作为启动程序
+                    String cmd = elfFile.getAbsolutePath();
+                    mTermuxTerminalSessionActivityClient.addNewSession(false, cmd);
+
+                } catch (WindowManager.BadTokenException e) {
+                    // Activity finished - ignore.
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        } else {
+            finishActivityIfNotFinishing();
+        }
+    } else {
+        if (!mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
+            boolean isFailSafe = intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
+            mTermuxTerminalSessionActivityClient.addNewSession(isFailSafe, null);
+        } else {
+            mTermuxTerminalSessionActivityClient.setCurrentSession(
+                mTermuxTerminalSessionActivityClient.getCurrentStoredSessionOrLast());
+        }
     }
+
+    mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
+}
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
