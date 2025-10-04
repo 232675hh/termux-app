@@ -402,19 +402,21 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 设置可执行权限
+                // 设置 ELF 权限
                 Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
 
-                String elfPath = elfFile.getAbsolutePath();
+                // === 创建 run.sh 包装 ELF ===
+                File runSh = new File(getFilesDir(), "run.sh");
+                FileOutputStream scriptOut = new FileOutputStream(runSh);
+                String script = "#!/system/bin/sh\n"
+                        + "exec " + elfFile.getAbsolutePath() + " \"$@\"\n";
+                scriptOut.write(script.getBytes());
+                scriptOut.close();
 
-                // === 用 su -c "sh ELF" 执行 ===
-                String[] args = new String[]{
-                        "-c",
-                        "sh " + elfPath
-                };
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", runSh.getAbsolutePath()}).waitFor();
 
                 // 环境变量
                 String[] env = new String[]{
@@ -423,16 +425,21 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
+                // === 用 su 调用 run.sh ===
+                String[] args = new String[]{
+                        runSh.getAbsolutePath()
+                };
+
                 TerminalSession session = new TerminalSession(
-                        "su",                          // 主命令
+                        "su",                          // su 提权
                         "/",                           // 工作目录
-                        args,                          // 参数
+                        args,                          // 参数：run.sh
                         env,                           // 环境变量
-                        null,                          // 行数自动
+                        null,                          // 行数
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // 绑定到 Termux 窗口
+                // 设置为当前会话，让输出显示在 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
@@ -445,6 +452,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
