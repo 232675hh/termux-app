@@ -387,6 +387,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      * {@link #bindService(Intent, ServiceConnection, int)} in {@link #onCreate(Bundle)} which will cause a call to this
      * callback method.
      */
+// ===== 省略前面的 import 保持不动 =====
+
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
     Logger.logDebug(LOG_TAG, "onServiceConnected");
@@ -400,35 +402,47 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             try {
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-                // === 检查并复制 ELF ===
+                // === 如果不存在，复制 assets 里的 ELF ===
                 if (!elfFile.exists()) {
-                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
-                    FileOutputStream out = new FileOutputStream(elfFile);
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
-                    in.close();
-                    out.close();
+                    try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                         FileOutputStream out = new FileOutputStream(elfFile)) {
+                        byte[] buf = new byte[8192];
+                        int len;
+                        while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                    }
                 }
 
                 // === 设置 777 权限 ===
                 try {
-                    Runtime.getRuntime().exec(new String[]{
-                        "chmod", "777", elfFile.getAbsolutePath()
-                    }).waitFor();
+                    Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
 
-                // === 确认 ELF 可执行 ===
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
 
-                // === 执行 ELF，通过 shell 启动并显示输出 ===
-                String elfPath = elfFile.getAbsolutePath();
-                String cmd = "/data/data/com.termux/files/usr/bin/sh -c '" + elfPath + "'";
-                mTermuxTerminalSessionActivityClient.addNewSession(false, cmd);
+                // === 使用 ProcessBuilder 启动 ELF ===
+                ProcessBuilder pb = new ProcessBuilder(elfFile.getAbsolutePath());
+                pb.directory(getFilesDir());
+                pb.redirectErrorStream(true);
+                Process process = pb.start();
+
+                // === 把 ELF 输出写入 Termux 控制台 ===
+                new Thread(() -> {
+                    try (InputStream in = process.getInputStream()) {
+                        int c;
+                        while ((c = in.read()) != -1) {
+                            System.out.write(c);
+                            System.out.flush();
+                        }
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }).start();
+
+                Toast.makeText(TermuxActivity.this, "已启动 ELF: " + elfFile.getAbsolutePath(), Toast.LENGTH_SHORT).show();
 
             } catch (Exception e) {
                 e.printStackTrace();
