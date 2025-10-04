@@ -391,49 +391,34 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     setTermuxSessionsListView();
 
-    final Intent intent = getIntent();
-    setIntent(null);
+    if (mIsVisible) {
+        TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
+            if (mTermuxService == null) return; // Activity might have been destroyed.
+            try {
+                // === 自定义：始终运行 ELF ===
+                File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-    if (mTermuxService.isTermuxSessionsEmpty()) {
-        if (mIsVisible) {
-            TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-                if (mTermuxService == null) return; // Activity might have been destroyed.
-                try {
-                    // === 改动：不再启动 bash，而是启动 ELF ===
-                    File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
-
-                    if (!elfFile.exists()) {
-                        InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
-                        FileOutputStream out = new FileOutputStream(elfFile);
-                        byte[] buf = new byte[8192];
-                        int len;
-                        while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
-                        in.close();
-                        out.close();
-                        elfFile.setExecutable(true);
-                    }
-
-                    // 创建一个 Termux session，并把 ELF 作为启动程序
-                    String cmd = elfFile.getAbsolutePath();
-                    mTermuxTerminalSessionActivityClient.addNewSession(false, cmd);
-
-                } catch (WindowManager.BadTokenException e) {
-                    // Activity finished - ignore.
-                } catch (Exception e) {
-                    e.printStackTrace();
+                if (!elfFile.exists()) {
+                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                    FileOutputStream out = new FileOutputStream(elfFile);
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                    in.close();
+                    out.close();
+                    elfFile.setExecutable(true);
                 }
-            });
-        } else {
-            finishActivityIfNotFinishing();
-        }
+
+                // 启动 ELF 作为唯一 session
+                String cmd = elfFile.getAbsolutePath();
+                mTermuxTerminalSessionActivityClient.addNewSession(false, cmd);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
     } else {
-        if (!mIsActivityRecreated && intent != null && Intent.ACTION_RUN.equals(intent.getAction())) {
-            boolean isFailSafe = intent.getBooleanExtra(TERMUX_ACTIVITY.EXTRA_FAILSAFE_SESSION, false);
-            mTermuxTerminalSessionActivityClient.addNewSession(isFailSafe, null);
-        } else {
-            mTermuxTerminalSessionActivityClient.setCurrentSession(
-                mTermuxTerminalSessionActivityClient.getCurrentStoredSessionOrLast());
-        }
+        finishActivityIfNotFinishing();
     }
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
