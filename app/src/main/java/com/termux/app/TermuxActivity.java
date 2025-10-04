@@ -389,9 +389,8 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
+                // === 复制 ELF 到内部目录 ===
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
-
-                // 如果 ELF 不存在，从 assets 复制
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -402,45 +401,60 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 设置 ELF 权限
+                // 设置可执行权限
                 Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
-                if (!elfFile.canExecute()) {
-                    elfFile.setExecutable(true, false);
+                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
+
+                // 修正路径：让 su 能找到
+                String elfPath = elfFile.getAbsolutePath().replace("/data/user/0/", "/data/data/");
+
+                // 检查 su 是否可用
+                boolean rootOk = false;
+                try {
+                    Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
+                    int exit = p.waitFor();
+                    if (exit == 0) {
+                        byte[] buf = new byte[128];
+                        int n = p.getInputStream().read(buf);
+                        if (n > 0 && new String(buf, 0, n).contains("uid=0")) {
+                            rootOk = true;
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                if (!rootOk) {
+                    runOnUiThread(() ->
+                            Toast.makeText(TermuxActivity.this, "⚠️ 必须 ROOT 才能运行 ELF，请先授权 su", Toast.LENGTH_LONG).show()
+                    );
+                    return;
                 }
 
-                // === 创建 run.sh 包装 ELF ===
-                File runSh = new File(getFilesDir(), "run.sh");
-                FileOutputStream scriptOut = new FileOutputStream(runSh);
-                String script = "#!/system/bin/sh\n"
-                        + "exec " + elfFile.getAbsolutePath() + " \"$@\"\n";
-                scriptOut.write(script.getBytes());
-                scriptOut.close();
-
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", runSh.getAbsolutePath()}).waitFor();
-
-                // 环境变量
+                // === su -c "/system/bin/sh -c 'exec /data/data/com.termux/files/AndroidSurfaceImguiEnhanced'" ===
                 String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
                         "HOME=" + getFilesDir().getAbsolutePath(),
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // === 用 su 调用 run.sh ===
                 String[] args = new String[]{
-                        runSh.getAbsolutePath()
+                        "-c",
+                        "su -c \"/system/bin/sh -c 'exec " + elfPath + "'\""
                 };
 
                 TerminalSession session = new TerminalSession(
-                        "su",                          // su 提权
-                        "/",                           // 工作目录
-                        args,                          // 参数：run.sh
-                        env,                           // 环境变量
-                        null,                          // 行数
+                        "/system/bin/sh",
+                        getFilesDir().getAbsolutePath(),
+                        args,
+                        env,
+                        null,
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // 设置为当前会话，让输出显示在 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
+
+                runOnUiThread(() ->
+                        Toast.makeText(TermuxActivity.this, "✅ ELF 启动中...", Toast.LENGTH_SHORT).show()
+                );
 
             } catch (Exception e) {
                 Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -452,6 +466,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
