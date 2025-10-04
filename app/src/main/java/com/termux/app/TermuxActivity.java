@@ -389,7 +389,6 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // ==== 1. 检查并复制 ELF 到私有目录 ====
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
@@ -401,33 +400,31 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // ==== 2. 设置执行权限 ====
+                // 设置执行权限
                 Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
 
-                // ==== 3. 检测 su 是否可用 ====
-                boolean hasRoot = false;
-                try {
-                    Process testSu = Runtime.getRuntime().exec("su -c id");
-                    int code = testSu.waitFor();
-                    if (code == 0) hasRoot = true;
-                } catch (Exception ignored) {}
+                // 环境变量
+                String[] env = new String[]{
+                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
+                        "HOME=" + getFilesDir().getAbsolutePath(),
+                        "TMPDIR=" + getCacheDir().getAbsolutePath()
+                };
 
-                if (!hasRoot) {
-                    Toast.makeText(TermuxActivity.this, "需要 root 权限才能运行 ELF", Toast.LENGTH_LONG).show();
-                    return;
-                }
+                // === 关键：用 su -c 包装 ELF ===
+                TerminalSession session = new TerminalSession(
+                        "su",                                // 执行 su
+                        "/",                                 // root 环境下随意
+                        new String[]{"-c", "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced"},
+                        env,
+                        null,
+                        mTermuxTerminalSessionActivityClient
+                );
 
-                // ==== 4. root 下必须使用 /data/data 路径 ====
-                String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
-
-                // ==== 5. su -c 启动 ELF，并显示到 Termux 窗口 ====
-                String execCmd = "su -c \"" + elfPath + "\"";
-
-                // 使用 Termux session 执行命令，输出会直接显示在终端
-                mTermuxTerminalSessionActivityClient.addNewSession(false, execCmd);
+                // 绑定到 Termux 窗口
+                mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
                 Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -439,8 +436,6 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
-
-
 
 
     @Override
