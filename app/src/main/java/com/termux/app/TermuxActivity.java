@@ -389,9 +389,8 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
+                // ==== 1. 检查并复制 ELF 到私有目录 ====
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
-
-                // 如果 ELF 不存在，从 assets 复制
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -402,54 +401,33 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 设置可执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
+                // ==== 2. 设置执行权限 ====
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) {
                     elfFile.setExecutable(true, false);
                 }
 
-                // 先检测 su 是否可用
-                boolean rootOk = false;
+                // ==== 3. 检测 su 是否可用 ====
+                boolean hasRoot = false;
                 try {
-                    Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
-                    int exit = p.waitFor();
-                    if (exit == 0) {
-                        byte[] buf = new byte[128];
-                        int n = p.getInputStream().read(buf);
-                        if (n > 0) {
-                            String out = new String(buf, 0, n);
-                            if (out.contains("uid=0")) rootOk = true;
-                        }
-                    }
+                    Process testSu = Runtime.getRuntime().exec("su -c id");
+                    int code = testSu.waitFor();
+                    if (code == 0) hasRoot = true;
                 } catch (Exception ignored) {}
 
-                if (!rootOk) {
-                    runOnUiThread(() -> 
-                        Toast.makeText(TermuxActivity.this, "必须 root 才能运行 ELF，请检查 su 授权", Toast.LENGTH_LONG).show()
-                    );
+                if (!hasRoot) {
+                    Toast.makeText(TermuxActivity.this, "需要 root 权限才能运行 ELF", Toast.LENGTH_LONG).show();
                     return;
                 }
 
-                // === 构造 TerminalSession，命令用 su -c 执行 ELF ===
-                String elfPath = elfFile.getAbsolutePath();
-                String[] args = new String[]{};
-                String[] env = new String[]{
-                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                        "HOME=" + getFilesDir().getAbsolutePath(),
-                        "TMPDIR=" + getCacheDir().getAbsolutePath()
-                };
+                // ==== 4. root 下必须使用 /data/data 路径 ====
+                String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
 
-                TerminalSession session = new TerminalSession(
-                        "/system/bin/sh",                      // shell
-                        getFilesDir().getAbsolutePath(),       // 工作目录
-                        new String[]{"-c", "su -c '" + elfPath + "'"}, // 参数
-                        env,
-                        null,
-                        mTermuxTerminalSessionActivityClient
-                );
+                // ==== 5. su -c 启动 ELF，并显示到 Termux 窗口 ====
+                String execCmd = "su -c \"" + elfPath + "\"";
 
-                // 显示到 Termux 窗口
-                mTermuxTerminalSessionActivityClient.setCurrentSession(session);
+                // 使用 Termux session 执行命令，输出会直接显示在终端
+                mTermuxTerminalSessionActivityClient.addNewSession(false, execCmd);
 
             } catch (Exception e) {
                 Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -461,6 +439,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
