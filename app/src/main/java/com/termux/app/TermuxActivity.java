@@ -408,11 +408,12 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     elfFile.setExecutable(true, false);
                 }
 
-                // === root 启动 ELF ===
-                String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
+                String elfPath = elfFile.getAbsolutePath();
+
+                // === 用 su -c "sh ELF" 执行 ===
                 String[] args = new String[]{
                         "-c",
-                        "sh -c 'exec " + elfPath + "'"
+                        "sh " + elfPath
                 };
 
                 // 环境变量
@@ -422,17 +423,16 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // 创建 su -c "sh -c 'exec ELF'" 会话
                 TerminalSession session = new TerminalSession(
-                        "su",
-                        "/",
-                        args,
-                        env,
-                        null,
+                        "su",                          // 主命令
+                        "/",                           // 工作目录
+                        args,                          // 参数
+                        env,                           // 环境变量
+                        null,                          // 行数自动
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // 让输出显示在 Termux 窗口
+                // 绑定到 Termux 窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
             } catch (Exception e) {
@@ -446,6 +446,9 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
 
+
+
+    
     @Override
     public void onServiceDisconnected(ComponentName name) {
         Logger.logDebug(LOG_TAG, "onServiceDisconnected");
@@ -453,10 +456,6 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
         // Respect being stopped from the {@link TermuxService} notification action.
         finishActivityIfNotFinishing();
     }
-
-
-
-
 
 
     private void reloadProperties() {
