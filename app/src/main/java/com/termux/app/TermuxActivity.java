@@ -1,5 +1,21 @@
 package com.termux.app;
 
+// ====== Java 核心库 ======
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Callable;
+import java.util.Arrays;
+
+// ====== Android 核心库 ======
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
@@ -11,11 +27,12 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.net.Uri;
 import android.os.Bundle;
-import java.io.File;
-import java.io.InputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
+import android.view.*;
+import android.widget.*;
+import android.util.Log;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.Gravity;
@@ -24,48 +41,8 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.EditText;
-import android.widget.ImageButton;
-import android.widget.ListView;
-import android.widget.RelativeLayout;
-import android.widget.Toast;
 
-import android.annotation.SuppressLint;
-import android.app.AlertDialog;
-import android.content.ActivityNotFoundException;
-import android.content.BroadcastReceiver;
-import android.content.ComponentName;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.content.ServiceConnection;
-import android.net.Uri;
-import android.os.Bundle;
-import android.os.IBinder;
-import android.view.*;
-import android.widget.*;
-
-import java.io.File;
-import java.io.FileInputStream;   // ✅ 加上这行
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.IOException;
-import android.util.Log;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.IOException;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.InputStream;
-import java.lang.Thread;
-import java.util.concurrent.Callable;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import android.os.Handler;
-import android.os.Looper;
-
+// ====== Termux 核心库 ======
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
 import com.termux.app.terminal.TermuxActivityRootView;
@@ -99,13 +76,13 @@ import com.termux.terminal.TerminalSessionClient;
 import com.termux.view.TerminalView;
 import com.termux.view.TerminalViewClient;
 
+// ====== AndroidX ======
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.viewpager.widget.ViewPager;
 
-import java.util.Arrays;
 
 /**
  * A terminal emulator activity.
