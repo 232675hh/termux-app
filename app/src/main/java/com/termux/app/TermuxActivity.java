@@ -420,14 +420,14 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 // ---------- 2) 设置执行权限 ----------
                 Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
 
-                String elfPath = elfFile.getAbsolutePath();
-                String[] env = new String[]{
+                final String elfPath = elfFile.getAbsolutePath(); // ✅ 改为 final
+                final String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
                         "HOME=" + getFilesDir().getAbsolutePath()
                 };
 
                 // ---------- 3) 创建 Termux shell 会话 ----------
-                TerminalSession session = new TerminalSession(
+                final TerminalSession session = new TerminalSession(  // ✅ 改为 final
                         "/system/bin/sh",
                         getFilesDir().getAbsolutePath(),
                         new String[]{"-l"},
@@ -439,14 +439,16 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
                 // ---------- 4) 反射查找写入接口 ----------
-                Method writeMethod = null;
+                final Method writeMethod; // ✅ 改为 final
+                Method tmp = null;
                 for (Method m : session.getClass().getMethods()) {
                     if (m.getName().equals("write") || m.getName().equals("writeToTerminal")) {
-                        writeMethod = m;
+                        tmp = m;
                         m.setAccessible(true);
                         break;
                     }
                 }
+                writeMethod = tmp;
 
                 if (writeMethod == null) {
                     Toast.makeText(TermuxActivity.this, "无法写入终端命令", Toast.LENGTH_LONG).show();
@@ -485,6 +487,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
         });
     }
 }
+
 
 
 
