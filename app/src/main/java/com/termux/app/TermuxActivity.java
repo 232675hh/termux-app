@@ -474,25 +474,61 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         args,
                         env,
                         null,
+@Override
+public void onServiceConnected(ComponentName componentName, IBinder service) {
+    mTermuxService = ((TermuxService.LocalBinder) service).service;
+    setTermuxSessionsListView();
+
+    if (mIsVisible) {
+        TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
+            if (mTermuxService == null) return;
+
+            try {
+                // === 统一路径 ===
+                File elfFile = new File("/data/data/com.termux/files/AndroidSurfaceImguiEnhanced");
+
+                // 如果 ELF 不存在，从 assets 复制
+                if (!elfFile.exists()) {
+                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                    FileOutputStream out = new FileOutputStream(elfFile);
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                    in.close();
+                    out.close();
+                }
+
+                // 设置可执行权限
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
+
+                // === root 运行 ELF ===
+                String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
+
+                String[] env = new String[]{
+                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
+                        "HOME=/data/data/com.termux/files/",
+                        "TMPDIR=/data/data/com.termux/cache"
+                };
+
+                // 用 su 直接启动 ELF，不嵌套 sh -c
+                TerminalSession session = new TerminalSession(
+                        "su",
+                        "/",
+                        new String[]{"-c", elfPath},   // 注意这里去掉多层引号，直接传参
+                        env,
+                        null,
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // === 6️⃣ 显示输出 ===
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
-                // === 7️⃣ 启动后延迟删除 ELF 文件（避免 race condition） ===
+                // === 运行后清理 ELF ===
                 new Thread(() -> {
                     try {
-                        Thread.sleep(3000); // 稍等 3 秒确保 ELF 已启动
-                        if (elfDst.exists()) {
-                            elfDst.delete();
-                        }
+                        Thread.sleep(8000); // 给 ELF 足够时间启动
+                        elfFile.delete();
                     } catch (Exception ignored) {}
                 }).start();
-
-                runOnUiThread(() ->
-                        Toast.makeText(TermuxActivity.this, "✅ 已以 root 启动 ELF（文件已自动删除）", Toast.LENGTH_SHORT).show()
-                );
 
             } catch (Exception e) {
                 Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -504,6 +540,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
