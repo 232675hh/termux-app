@@ -417,70 +417,29 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
     mTermuxService = ((TermuxService.LocalBinder) service).service;
     setTermuxSessionsListView();
 
-    if (mIsVisible) {
-        TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-            if (mTermuxService == null) return;
+    if (mIsVisible && mTermuxService != null) {
+        try {
+            File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-            try {
-                File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
+            // 如果 ELF 不存在，从 assets 复制
+            if (!elfFile.exists()) {
+                InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                FileOutputStream out = new FileOutputStream(elfFile);
+                byte[] buf = new byte[8192];
+                int len;
+                while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                in.close();
+                out.close();
+            }
 
-                // 如果 ELF 不存在，从 assets 复制
-                if (!elfFile.exists()) {
-                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
-                    FileOutputStream out = new FileOutputStream(elfFile);
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
-                    in.close();
-                    out.close();
-                }
+            // 授权可执行
+            Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
 
-                // 授权可执行
-                Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
+            // 在 Termux 终端创建一个新的会话运行 ELF（su 权限）
+            String cmd = "su -c " + elfFile.getAbsolutePath();
+            mTermuxService.createTermSession(cmd, null, null);
 
-                // === 用 su 执行并保持完整 I/O 通道 ===
-                new Thread(() -> {
-                    try {
-                        String cmd = "su -c \"exec " + elfFile.getAbsolutePath() + " <&0 >&1 2>&1\"";
-                        ProcessBuilder pb = new ProcessBuilder("sh", "-c", cmd);
-                        pb.directory(getFilesDir());
-                        pb.redirectErrorStream(true);
-                        Process p = pb.start();
-
-                        InputStream inStream = p.getInputStream();
-                        OutputStream outStream = p.getOutputStream();
-
-                        // 持续读取 ELF 输出（原始字节方式，支持动态刷新）
-                        new Thread(() -> {
-                            try {
-                                byte[] buffer = new byte[1024];
-                                int len;
-                                while ((len = inStream.read(buffer)) != -1) {
-                                    System.out.write(buffer, 0, len);
-                                    System.out.flush();
-                                }
-                            } catch (Exception ignored) {}
-                        }).start();
-
-                        // 将 Termux 用户输入转发到 ELF（实时交互）
-                        new Thread(() -> {
-                            try {
-                                InputStream termuxIn = System.in;
-                                byte[] ibuf = new byte[128];
-                                int n;
-                                while ((n = termuxIn.read(ibuf)) > 0) {
-                                    outStream.write(ibuf, 0, n);
-                                    outStream.flush();
-                                }
-                            } catch (Exception ignored) {}
-                        }).start();
-
-                        p.waitFor();
-                    } catch (Exception ignored) {}
-                }).start();
-
-            } catch (Exception ignored) {}
-        });
+        } catch (Exception ignored) {}
     }
 }
 
