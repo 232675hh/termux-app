@@ -410,6 +410,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
 
+
     
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
@@ -440,9 +441,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 // === 用 su 执行并保持完整 I/O 通道 ===
                 new Thread(() -> {
                     try {
-                        // 关键：继承标准输入输出，不分行读取
                         String cmd = "su -c \"exec " + elfFile.getAbsolutePath() + " <&0 >&1 2>&1\"";
-
                         ProcessBuilder pb = new ProcessBuilder("sh", "-c", cmd);
                         pb.directory(getFilesDir());
                         pb.redirectErrorStream(true);
@@ -451,22 +450,19 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         InputStream inStream = p.getInputStream();
                         OutputStream outStream = p.getOutputStream();
 
-                        // 创建线程持续读取 ELF 输出（原始字节方式，支持动态刷新）
-                        Thread outputThread = new Thread(() -> {
+                        // 持续读取 ELF 输出（原始字节方式，支持动态刷新）
+                        new Thread(() -> {
                             try {
                                 byte[] buffer = new byte[1024];
                                 int len;
                                 while ((len = inStream.read(buffer)) != -1) {
                                     System.out.write(buffer, 0, len);
-                                    System.out.flush(); // 保证即时刷新
+                                    System.out.flush();
                                 }
-                            } catch (Exception e) {
-                                Log.e("TermuxELF", "读取输出失败", e);
-                            }
-                        });
-                        outputThread.start();
+                            } catch (Exception ignored) {}
+                        }).start();
 
-                        // 可选：将 Termux 用户输入转发到 ELF（实时交互）
+                        // 将 Termux 用户输入转发到 ELF（实时交互）
                         new Thread(() -> {
                             try {
                                 InputStream termuxIn = System.in;
@@ -480,18 +476,14 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         }).start();
 
                         p.waitFor();
-
-                    } catch (Exception e) {
-                        Log.e("TermuxELF", "执行失败", e);
-                    }
+                    } catch (Exception ignored) {}
                 }).start();
 
-            } catch (Exception e) {
-                Log.e("TermuxELF", "ELF 启动异常", e);
-            }
+            } catch (Exception ignored) {}
         });
     }
 }
+
 
 
 
