@@ -396,12 +396,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
     
-// 需要 import
-import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
-import android.os.Handler;
-import android.os.Looper;
-
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
     mTermuxService = ((TermuxService.LocalBinder) service).service;
