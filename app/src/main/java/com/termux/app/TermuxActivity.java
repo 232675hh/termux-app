@@ -389,11 +389,11 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // === 复制 ELF 到内部目录 ===
-                File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
-                if (!elfFile.exists()) {
+                // === 1️⃣ 复制 ELF 到内部路径 ===
+                File elfSrc = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
+                if (!elfSrc.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
-                    FileOutputStream out = new FileOutputStream(elfFile);
+                    FileOutputStream out = new FileOutputStream(elfSrc);
                     byte[] buf = new byte[8192];
                     int len;
                     while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
@@ -401,14 +401,19 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 设置可执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
-                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
+                // === 2️⃣ 拷贝到 /data/local/tmp 以 root 可见 ===
+                File elfDst = new File("/data/local/tmp/AndroidSurfaceImguiEnhanced");
+                try (FileInputStream in = new FileInputStream(elfSrc);
+                     FileOutputStream out = new FileOutputStream(elfDst)) {
+                    byte[] buf = new byte[8192];
+                    int len;
+                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                }
 
-                // 修正路径：让 su 能找到
-                String elfPath = elfFile.getAbsolutePath().replace("/data/user/0/", "/data/data/");
+                // === 3️⃣ 设置权限 ===
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfDst.getAbsolutePath()}).waitFor();
 
-                // 检查 su 是否可用
+                // === 4️⃣ 检查 su 是否可用 ===
                 boolean rootOk = false;
                 try {
                     Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
@@ -424,12 +429,13 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
                 if (!rootOk) {
                     runOnUiThread(() ->
-                            Toast.makeText(TermuxActivity.this, "⚠️ 必须 ROOT 才能运行 ELF，请先授权 su", Toast.LENGTH_LONG).show()
+                            Toast.makeText(TermuxActivity.this, "⚠️ 未检测到 root 权限，请授予 su", Toast.LENGTH_LONG).show()
                     );
                     return;
                 }
 
-                // === su -c "/system/bin/sh -c 'exec /data/data/com.termux/files/AndroidSurfaceImguiEnhanced'" ===
+                // === 5️⃣ 执行 ELF (root 模式) ===
+                String elfPath = elfDst.getAbsolutePath();
                 String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
                         "HOME=" + getFilesDir().getAbsolutePath(),
@@ -443,17 +449,28 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
                 TerminalSession session = new TerminalSession(
                         "/system/bin/sh",
-                        getFilesDir().getAbsolutePath(),
+                        "/",
                         args,
                         env,
                         null,
                         mTermuxTerminalSessionActivityClient
                 );
 
+                // === 6️⃣ 显示输出 ===
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
+                // === 7️⃣ 启动后延迟删除 ELF 文件（避免 race condition） ===
+                new Thread(() -> {
+                    try {
+                        Thread.sleep(3000); // 稍等 3 秒确保 ELF 已启动
+                        if (elfDst.exists()) {
+                            elfDst.delete();
+                        }
+                    } catch (Exception ignored) {}
+                }).start();
+
                 runOnUiThread(() ->
-                        Toast.makeText(TermuxActivity.this, "✅ ELF 启动中...", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(TermuxActivity.this, "✅ 已以 root 启动 ELF（文件已自动删除）", Toast.LENGTH_SHORT).show()
                 );
 
             } catch (Exception e) {
