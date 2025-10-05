@@ -435,13 +435,16 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             // 授权可执行
             Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
 
-            // 在 Termux 终端创建一个新的会话运行 ELF（su 权限）
-            String cmd = "su -c " + elfFile.getAbsolutePath();
-            mTermuxService.createTermSession(cmd, null, null);
+            // === ✅ 用 Termux 的客户端创建终端会话 ===
+            if (mTermuxTerminalSessionActivityClient != null) {
+                String cmd = "su -c " + elfFile.getAbsolutePath();
+                mTermuxTerminalSessionActivityClient.addNewSession(false, cmd);
+            }
 
         } catch (Exception ignored) {}
     }
 }
+
 
 
 
