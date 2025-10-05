@@ -410,86 +410,15 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // === 1️⃣ 复制 ELF 到内部路径 ===
-                File elfSrc = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
-                if (!elfSrc.exists()) {
-                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
-                    FileOutputStream out = new FileOutputStream(elfSrc);
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
-                    in.close();
-                    out.close();
-                }
+                // 1. 复制 ELF 到 Termux HOME
+                File homeDir = new File("/data/data/com.termux/files/home");
+                if (!homeDir.exists()) homeDir.mkdirs();
 
-                // === 2️⃣ 拷贝到 /data/local/tmp 以 root 可见 ===
-                File elfDst = new File("/data/local/tmp/AndroidSurfaceImguiEnhanced");
-                try (FileInputStream in = new FileInputStream(elfSrc);
-                     FileOutputStream out = new FileOutputStream(elfDst)) {
-                    byte[] buf = new byte[8192];
-                    int len;
-                    while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
-                }
+                String elfName = "AndroidSurfaceImguiEnhanced";
+                File elfFile = new File(homeDir, elfName);
 
-                // === 3️⃣ 设置权限 ===
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfDst.getAbsolutePath()}).waitFor();
-
-                // === 4️⃣ 检查 su 是否可用 ===
-                boolean rootOk = false;
-                try {
-                    Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
-                    int exit = p.waitFor();
-                    if (exit == 0) {
-                        byte[] buf = new byte[128];
-                        int n = p.getInputStream().read(buf);
-                        if (n > 0 && new String(buf, 0, n).contains("uid=0")) {
-                            rootOk = true;
-                        }
-                    }
-                } catch (Exception ignored) {}
-
-                if (!rootOk) {
-                    runOnUiThread(() ->
-                            Toast.makeText(TermuxActivity.this, "⚠️ 未检测到 root 权限，请授予 su", Toast.LENGTH_LONG).show()
-                    );
-                    return;
-                }
-
-                // === 5️⃣ 执行 ELF (root 模式) ===
-                String elfPath = elfDst.getAbsolutePath();
-                String[] env = new String[]{
-                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                        "HOME=" + getFilesDir().getAbsolutePath(),
-                        "TMPDIR=" + getCacheDir().getAbsolutePath()
-                };
-
-                String[] args = new String[]{
-                        "-c",
-                        "su -c \"/system/bin/sh -c 'exec " + elfPath + "'\""
-                };
-
-                TerminalSession session = new TerminalSession(
-                        "/system/bin/sh",
-                        "/",
-                        args,
-                        env,
-                        null,
-@Override
-public void onServiceConnected(ComponentName componentName, IBinder service) {
-    mTermuxService = ((TermuxService.LocalBinder) service).service;
-    setTermuxSessionsListView();
-
-    if (mIsVisible) {
-        TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
-            if (mTermuxService == null) return;
-
-            try {
-                // === 统一路径 ===
-                File elfFile = new File("/data/data/com.termux/files/AndroidSurfaceImguiEnhanced");
-
-                // 如果 ELF 不存在，从 assets 复制
                 if (!elfFile.exists()) {
-                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
+                    InputStream in = getAssets().open(elfName);
                     FileOutputStream out = new FileOutputStream(elfFile);
                     byte[] buf = new byte[8192];
                     int len;
@@ -498,23 +427,30 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 设置可执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
+                // 2. 赋执行权限
+                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
 
-                // === root 运行 ELF ===
-                String elfPath = "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced";
+                // 3. 写入 run.sh（用户手动执行逻辑）
+                File runSh = new File(homeDir, "run.sh");
+                String script = "#!/system/bin/sh\n"
+                        + "su\n";  // 进入 root shell，让用户交互执行 ELF
+                FileOutputStream out2 = new FileOutputStream(runSh);
+                out2.write(script.getBytes());
+                out2.close();
+                Runtime.getRuntime().exec(new String[]{"chmod", "777", runSh.getAbsolutePath()}).waitFor();
 
+                // 4. 环境变量
                 String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                        "HOME=/data/data/com.termux/files/",
-                        "TMPDIR=/data/data/com.termux/cache"
+                        "HOME=" + homeDir.getAbsolutePath(),
+                        "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // 用 su 直接启动 ELF，不嵌套 sh -c
+                // 5. 创建终端会话：运行 run.sh（进入 root）
                 TerminalSession session = new TerminalSession(
-                        "su",
-                        "/",
-                        new String[]{"-c", elfPath},   // 注意这里去掉多层引号，直接传参
+                        "/system/bin/sh",
+                        homeDir.getAbsolutePath(),
+                        new String[]{runSh.getAbsolutePath()},
                         env,
                         null,
                         mTermuxTerminalSessionActivityClient
@@ -522,16 +458,8 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
-                // === 运行后清理 ELF ===
-                new Thread(() -> {
-                    try {
-                        Thread.sleep(8000); // 给 ELF 足够时间启动
-                        elfFile.delete();
-                    } catch (Exception ignored) {}
-                }).start();
-
             } catch (Exception e) {
-                Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                Toast.makeText(TermuxActivity.this, "启动失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
     } else {
