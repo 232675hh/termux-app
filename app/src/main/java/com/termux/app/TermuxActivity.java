@@ -418,68 +418,32 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 }
 
                 // ---------- 2) 设置执行权限 ----------
-                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
 
-                final String elfPath = elfFile.getAbsolutePath(); // ✅ 改为 final
+                final String elfPath = elfFile.getAbsolutePath();
                 final String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                        "HOME=" + getFilesDir().getAbsolutePath()
+                        "HOME=" + getFilesDir().getAbsolutePath(),
+                        "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // ---------- 3) 创建 Termux shell 会话 ----------
-                final TerminalSession session = new TerminalSession(  // ✅ 改为 final
+                // ---------- 3) 创建 su 会话 ----------
+                // 一次性执行 root + ELF
+                final String cmd = "su -c 'exec " + elfPath + "'";
+
+                final TerminalSession session = new TerminalSession(
                         "/system/bin/sh",
                         getFilesDir().getAbsolutePath(),
-                        new String[]{"-l"},
+                        new String[]{"-c", cmd},
                         env,
                         null,
                         mTermuxTerminalSessionActivityClient
                 );
 
+                // 显示在终端窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
-                // ---------- 4) 反射查找写入接口 ----------
-                final Method writeMethod; // ✅ 改为 final
-                Method tmp = null;
-                for (Method m : session.getClass().getMethods()) {
-                    if (m.getName().equals("write") || m.getName().equals("writeToTerminal")) {
-                        tmp = m;
-                        m.setAccessible(true);
-                        break;
-                    }
-                }
-                writeMethod = tmp;
-
-                if (writeMethod == null) {
-                    Toast.makeText(TermuxActivity.this, "无法写入终端命令", Toast.LENGTH_LONG).show();
-                    return;
-                }
-
-                // ---------- 5) 自动输入 su ----------
-                writeMethod.invoke(session, "su\n");
-
-                // ---------- 6) 检测 root 授权并执行 ELF ----------
-                Handler handler = new Handler(Looper.getMainLooper());
-
-                Runnable checkRoot = new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            String output = session.getEmulator().getScreen().getTranscriptText();
-                            if (output != null && output.contains("uid=0")) {
-                                // 已经 root 成功
-                                writeMethod.invoke(session, "exec " + elfPath + "\n");
-                            } else {
-                                // 继续检测
-                                handler.postDelayed(this, 500);
-                            }
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                    }
-                };
-
-                handler.postDelayed(checkRoot, 500);
+                Toast.makeText(TermuxActivity.this, "已请求 Root 并启动 ELF...", Toast.LENGTH_SHORT).show();
 
             } catch (Exception e) {
                 Toast.makeText(TermuxActivity.this, "启动失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
@@ -487,8 +451,6 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
         });
     }
 }
-
-
 
 
 
