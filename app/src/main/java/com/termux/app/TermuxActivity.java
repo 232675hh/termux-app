@@ -428,153 +428,86 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
     TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
         if (mTermuxService == null) return;
 
-        // Helper: 在后台线程中执行 su -c id，返回是否获得 root（uid=0）
-        final Callable<Boolean> checkRoot = () -> {
+        new Thread(() -> {
             try {
-                Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                InputStream is = p.getInputStream();
-                byte[] buf = new byte[256];
-                int r;
-                while ((r = is.read(buf)) > 0) baos.write(buf, 0, r);
-                is.close();
-                p.waitFor();
-                String out = baos.toString();
-                return out != null && out.contains("uid=0");
-            } catch (Exception e) {
-                return false;
-            }
-        };
-
-        // 如果没有 root，则打开一个 su 会话让用户授权，并在后台轮询直到授权或超时
-        final Runnable ensureRootAndRun = () -> {
-            try {
-                // 首先快速检查一次
-                boolean alreadyRoot = false;
+                // ========== 检测 root 是否可用 ==========
+                boolean hasRoot = false;
                 try {
-                    alreadyRoot = checkRoot.call();
+                    Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    InputStream is = p.getInputStream();
+                    byte[] buf = new byte[256];
+                    int len;
+                    while ((len = is.read(buf)) > 0) baos.write(buf, 0, len);
+                    p.waitFor();
+                    String out = baos.toString();
+                    if (out.contains("uid=0")) hasRoot = true;
                 } catch (Exception ignored) {}
 
-                if (!alreadyRoot) {
-                    // 在 Termux 窗口打开 su 会话（让用户授权）
-                    runOnUiThread(() -> Toast.makeText(TermuxActivity.this,
-                            "将打开 su 窗口，请在弹出的授权对话中允许 root 权限，然后在 su 提示下授权（若需要）",
-                            Toast.LENGTH_LONG).show());
-
-                    // 打开一个交互式 su 会话：这样用户能看到 su 的授权对话并可以交互
-                    String[] suArgs = new String[] { "-c", "exec /system/bin/sh" }; // 交互 shell
-                    String[] env = new String[] {
-                            "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                            "HOME=" + getFilesDir().getAbsolutePath(),
-                            "TMPDIR=" + getCacheDir().getAbsolutePath()
-                    };
-
-                    TerminalSession suSession = new TerminalSession(
-                            "su",
-                            "/",
-                            suArgs,
-                            env,
-                            null,
-                            mTermuxTerminalSessionActivityClient
-                    );
-
-                    // 显示 su 会话到 Termux 窗口（让用户看到并可以授权）
-                    mTermuxTerminalSessionActivityClient.setCurrentSession(suSession);
-
-                    // 后台轮询检查 root（最多等待 30 秒，每 1s 检查一次）
-                    long start = System.currentTimeMillis();
-                    final long timeoutMs = 30_000L;
-                    boolean gotRoot = false;
-                    while (System.currentTimeMillis() - start < timeoutMs) {
-                        try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
-                        try {
-                            if (checkRoot.call()) {
-                                gotRoot = true;
-                                break;
-                            }
-                        } catch (Exception ignored) {}
-                    }
-
-                    if (!gotRoot) {
-                        runOnUiThread(() -> Toast.makeText(TermuxActivity.this,
-                                "未获得 root（超时），无法启动 ELF。", Toast.LENGTH_LONG).show());
-                        return;
-                    } else {
-                        // 用户已授权 root，继续下一步（启动 ELF）
-                        runOnUiThread(() -> Toast.makeText(TermuxActivity.this,
-                                "已获得 root，正在启动 ELF ...", Toast.LENGTH_SHORT).show());
-                    }
-                } else {
-                    // 已经有 root，继续
-                    runOnUiThread(() -> Toast.makeText(TermuxActivity.this,
-                            "检测到已有 root，正在启动 ELF ...", Toast.LENGTH_SHORT).show());
+                if (!hasRoot) {
+                    runOnUiThread(() ->
+                            Toast.makeText(TermuxActivity.this,
+                                    "未检测到 Root，请授权 su 权限后再试。",
+                                    Toast.LENGTH_LONG).show());
+                    return;
                 }
 
-                // ==== 已获得 root（或原本已有 root）: 复制、chmod、并以 su -c 启动 ELF ====
-
+                // ========== 准备 ELF 文件 ==========
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
-
-                // 复制 assets -> 文件（若不存在）
                 if (!elfFile.exists()) {
                     try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                          FileOutputStream out = new FileOutputStream(elfFile)) {
-                        byte[] buf = new byte[8192];
-                        int len;
-                        while ((len = in.read(buf)) > 0) out.write(buf, 0, len);
+                        byte[] buffer = new byte[8192];
+                        int n;
+                        while ((n = in.read(buffer)) > 0)
+                            out.write(buffer, 0, n);
                     }
                 }
 
-                // 确保可执行权限
-                try {
-                    Process chmodP = Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()});
-                    chmodP.waitFor();
-                } catch (Exception ignored) {}
+                // 设置执行权限
+                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
                 if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
 
-                // 环境变量
-                String[] env2 = new String[] {
+                // ========== 构建命令 & 环境变量 ==========
+                String elfPath = elfFile.getAbsolutePath();
+                String[] args = new String[]{"-c", "exec su -c '" + elfPath + "'"};
+                String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
                         "HOME=" + getFilesDir().getAbsolutePath(),
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // 用 sh -c "su -c '/path/to/elf [args]'" 的方式启动，确保会走 su 流程
-                String elfPath = elfFile.getAbsolutePath();
-                String cmd = "su -c '" + elfPath + "'";
-
-                TerminalSession runSession = new TerminalSession(
-                        "/system/bin/sh",
-                        getFilesDir().getAbsolutePath(),
-                        new String[]{ "-c", cmd },
-                        env2,
+                // ========== 创建会话 ==========
+                TerminalSession session = new TerminalSession(
+                        "/system/bin/sh",                      // Shell
+                        getFilesDir().getAbsolutePath(),       // 工作目录
+                        args,                                  // 参数
+                        env,                                   // 环境变量
                         null,
                         mTermuxTerminalSessionActivityClient
                 );
 
-                // 把这个会话显示到 Termux 窗口（显示 ELF 输出）
-                mTermuxTerminalSessionActivityClient.setCurrentSession(runSession);
+                // 切回主线程绑定会话显示输出
+                runOnUiThread(() -> {
+                    mTermuxTerminalSessionActivityClient.setCurrentSession(session);
+                    Toast.makeText(TermuxActivity.this, "Root 已授权，正在启动 ELF ...", Toast.LENGTH_SHORT).show();
+                });
 
-                // （可选）启动成功后删除本地文件（如果你不想保留）
-                new Thread(() -> {
-                    try {
-                        Thread.sleep(5000);
-                        elfFile.delete();
-                    } catch (Exception ignored) {}
-                }).start();
+                // ========== 启动后延时删除 ELF ==========
+                Thread.sleep(8000);
+                elfFile.delete();
 
             } catch (Exception e) {
-                final String msg = e.getMessage() == null ? e.toString() : e.getMessage();
-                runOnUiThread(() -> Toast.makeText(TermuxActivity.this,
-                        "启动 ELF 失败: " + msg, Toast.LENGTH_LONG).show());
+                String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+                runOnUiThread(() ->
+                        Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + msg, Toast.LENGTH_LONG).show());
             }
-        };
-
-        // 在后台线程执行整个 ensureRootAndRun 流程（避免阻塞主线程）
-        new Thread(ensureRootAndRun).start();
+        }).start();
     });
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
