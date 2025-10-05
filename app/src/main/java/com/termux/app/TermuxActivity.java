@@ -406,7 +406,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // 复制 ELF
+                // ---------- 1) 复制 ELF ----------
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
                 if (!elfFile.exists()) {
                     try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
@@ -417,7 +417,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     }
                 }
 
-                // 赋予执行权限
+                // ---------- 2) 设置执行权限 ----------
                 Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
 
                 String elfPath = elfFile.getAbsolutePath();
@@ -426,7 +426,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                         "HOME=" + getFilesDir().getAbsolutePath()
                 };
 
-                // 启动 shell 会话
+                // ---------- 3) 创建 Termux shell 会话 ----------
                 TerminalSession session = new TerminalSession(
                         "/system/bin/sh",
                         getFilesDir().getAbsolutePath(),
@@ -438,7 +438,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
-                // 反射找到写入接口
+                // ---------- 4) 反射查找写入接口 ----------
                 Method writeMethod = null;
                 for (Method m : session.getClass().getMethods()) {
                     if (m.getName().equals("write") || m.getName().equals("writeToTerminal")) {
@@ -453,23 +453,31 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     return;
                 }
 
-                // 自动输入 su
+                // ---------- 5) 自动输入 su ----------
                 writeMethod.invoke(session, "su\n");
 
-                // 检测授权（通过读取 TerminalSession 输出）
+                // ---------- 6) 检测 root 授权并执行 ELF ----------
                 Handler handler = new Handler(Looper.getMainLooper());
-                handler.postDelayed(() -> {
-                    String output = session.getEmulator().getScreen().getTranscriptText();
-                    if (output != null && output.contains("uid=0")) {
+
+                Runnable checkRoot = new Runnable() {
+                    @Override
+                    public void run() {
                         try {
-                            writeMethod.invoke(session, "exec " + elfPath + "\n");
-                        } catch (Exception ex) {
-                            ex.printStackTrace();
+                            String output = session.getEmulator().getScreen().getTranscriptText();
+                            if (output != null && output.contains("uid=0")) {
+                                // 已经 root 成功
+                                writeMethod.invoke(session, "exec " + elfPath + "\n");
+                            } else {
+                                // 继续检测
+                                handler.postDelayed(this, 500);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
                         }
-                    } else {
-                        handler.postDelayed(this, 500); // 继续检测
                     }
-                }, 500);
+                };
+
+                handler.postDelayed(checkRoot, 500);
 
             } catch (Exception e) {
                 Toast.makeText(TermuxActivity.this, "启动失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
