@@ -430,31 +430,55 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
                 File wrapperSu = new File(binDir, "su");
 
-                // 改进的 wrapper 脚本：支持自定义 su
+                // ✅ 改进版 wrapper：支持路径输入 + 无权限检测循环
                 String wrapper =
                     "#!/system/bin/sh\n" +
-                    "REAL_SU=\"\"\n" +
-                    "for p in /system/bin/su /system/xbin/su; do\n" +
-                    "    [ -x \"$p\" ] && REAL_SU=\"$p\" && break\n" +
-                    "done\n" +
-                    "if [ -z \"$REAL_SU\" ]; then\n" +
-                    "    echo \"[!] 未找到 su 可执行文件，请手动输入 su 路径:\"\n" +
-                    "    while true; do\n" +
-                    "        read -p '输入 su 路径: ' user_su\n" +
-                    "        if [ -x \"$user_su\" ]; then\n" +
-                    "            REAL_SU=\"$user_su\"\n" +
-                    "            break\n" +
-                    "        else\n" +
-                    "            echo \"[-] 无效路径，请重新输入。\"\n" +
-                    "        fi\n" +
-                    "    done\n" +
-                    "fi\n" +
                     "ELF=\"" + elfFile.getAbsolutePath() + "\"\n" +
-                    "if [ \"$#\" -gt 0 ]; then\n" +
-                    "    exec \"$REAL_SU\" \"$@\"\n" +
-                    "else\n" +
+                    "find_su() {\n" +
+                    "  for p in /system/bin/su /system/xbin/su; do\n" +
+                    "    [ -x \"$p\" ] && echo \"$p\" && return 0\n" +
+                    "  done\n" +
+                    "  echo \"\"\n" +
+                    "}\n" +
+                    "\n" +
+                    "REAL_SU=$(find_su)\n" +
+                    "if [ -z \"$REAL_SU\" ]; then\n" +
+                    "  echo \"[!] 未找到 su 可执行文件，请手动输入 su 路径:\"\n" +
+                    "  while true; do\n" +
+                    "    read -p '输入 su 路径: ' user_su\n" +
+                    "    if [ -x \"$user_su\" ]; then\n" +
+                    "      REAL_SU=\"$user_su\"\n" +
+                    "      break\n" +
+                    "    else\n" +
+                    "      echo \"[-] 无效路径，请重新输入。\"\n" +
+                    "    fi\n" +
+                    "  done\n" +
+                    "fi\n" +
+                    "\n" +
+                    "while true; do\n" +
+                    "  echo \"[*] 尝试使用 $REAL_SU 获取 root 权限...\"\n" +
+                    "  # 检查 su 是否能成功执行 id\n" +
+                    "  ID_OUT=$($REAL_SU -c id 2>&1)\n" +
+                    "  if echo \"$ID_OUT\" | grep -q 'uid=0'; then\n" +
+                    "    echo \"[+] Root 权限已获取，启动 ELF...\"\n" +
                     "    exec \"$REAL_SU\" -c \"exec '$ELF'\"\n" +
-                    "fi\n";
+                    "    exit 0\n" +
+                    "  else\n" +
+                    "    echo \"[-] su 权限失败或被拒绝。\"\n" +
+                    "    read -p '是否输入新的 su 路径？(y/n): ' ans\n" +
+                    "    if [ \"$ans\" = \"y\" ] || [ \"$ans\" = \"Y\" ]; then\n" +
+                    "      read -p '输入新的 su 路径: ' new_su\n" +
+                    "      if [ -x \"$new_su\" ]; then\n" +
+                    "        REAL_SU=\"$new_su\"\n" +
+                    "      else\n" +
+                    "        echo \"[-] 无效路径，保持原 su。\"\n" +
+                    "      fi\n" +
+                    "    else\n" +
+                    "      echo \"[!] 用户取消，退出。\"\n" +
+                    "      exit 1\n" +
+                    "    fi\n" +
+                    "  fi\n" +
+                    "done\n";
 
                 try (FileOutputStream out = new FileOutputStream(wrapperSu)) {
                     out.write(wrapper.getBytes());
