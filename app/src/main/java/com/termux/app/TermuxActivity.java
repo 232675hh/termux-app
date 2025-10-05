@@ -415,6 +415,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
 
     
+// 需要 import
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import android.os.Handler;
+import android.os.Looper;
+
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
     mTermuxService = ((TermuxService.LocalBinder) service).service;
@@ -425,7 +431,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // ---------- 1) 复制 ELF 到 app files -----------
+                // 复制 ELF
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
                 if (!elfFile.exists()) {
                     try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
@@ -436,79 +442,67 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     }
                 }
 
-                // chmod 755/777
-                Runtime.getRuntime().exec(new String[] { "chmod", "755", elfFile.getAbsolutePath() }).waitFor();
-                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
+                // 赋予执行权限
+                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
 
-                // ---------- 2) 创建 $HOME/bin 以及 wrapper su 脚本 -----------
-                File homeDir = new File("/data/data/com.termux/files/home");
-                File binDir = new File(homeDir, "bin");
-                if (!binDir.exists()) binDir.mkdirs();
-
-                File wrapperSu = new File(binDir, "su");
-                String wrapper =
-                    "#!/system/bin/sh\n" +
-                    "REAL_SU=\"/system/bin/su\"\n" +
-                    "[ ! -x \"$REAL_SU\" ] && REAL_SU=\"/system/xbin/su\"\n" +
-                    "ELF=\"" + elfFile.getAbsolutePath() + "\"\n" +
-                    "if [ \"$#\" -gt 0 ]; then\n" +
-                    "    exec \"$REAL_SU\" \"$@\"\n" +
-                    "else\n" +
-                    "    exec \"$REAL_SU\" -c \"exec '$ELF'\"\n" +
-                    "fi\n";
-
-                try (FileOutputStream out = new FileOutputStream(wrapperSu)) {
-                    out.write(wrapper.getBytes());
-                }
-                Runtime.getRuntime().exec(new String[] { "chmod", "755", wrapperSu.getAbsolutePath() }).waitFor();
-
-                // ---------- 3) 确保 TERMUX shell 会把 $HOME/bin 放在 PATH 前面（追加到 .profile） -----------
-                File profile = new File(homeDir, ".profile");
-                String ensurePath = "\n# ensure $HOME/bin in PATH for wrapper su\n" +
-                                    "case \":$PATH:\" in\n" +
-                                    "  *:$(echo $HOME)/bin:*) ;;\n" +
-                                    "  *) PATH=\"$HOME/bin:$PATH\" ; export PATH;;\n" +
-                                    "esac\n";
-                // 只在没有存在标记的情况下追加
-                String profileContent = "";
-                if (profile.exists()) {
-                    profileContent = new String(java.nio.file.Files.readAllBytes(profile.toPath()));
-                }
-                if (!profileContent.contains("ensure $HOME/bin in PATH for wrapper su")) {
-                    try (FileOutputStream out = new FileOutputStream(profile, true)) {
-                        out.write(ensurePath.getBytes());
-                    }
-                }
-
-                // ---------- 4) 启动一个 Termux shell 会话（用户可在其中输入 su） -----------
-                String[] env = new String[] {
-                    "PATH=/data/data/com.termux/files/home/bin:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin",
-                    "HOME=" + homeDir.getAbsolutePath()
+                String elfPath = elfFile.getAbsolutePath();
+                String[] env = new String[]{
+                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
+                        "HOME=" + getFilesDir().getAbsolutePath()
                 };
 
-                // 启动交互 shell（工作目录为 home），用户在里面输入 `su` 就会触发 wrapper 脚本
+                // 启动 shell 会话
                 TerminalSession session = new TerminalSession(
-                    "/system/bin/sh",
-                    homeDir.getAbsolutePath(),
-                    new String[] { "-l" }, // login shell，加载 .profile 等
-                    env,
-                    null,
-                    mTermuxTerminalSessionActivityClient
+                        "/system/bin/sh",
+                        getFilesDir().getAbsolutePath(),
+                        new String[]{"-l"},
+                        env,
+                        null,
+                        mTermuxTerminalSessionActivityClient
                 );
 
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
+                // 反射找到写入接口
+                Method writeMethod = null;
+                for (Method m : session.getClass().getMethods()) {
+                    if (m.getName().equals("write") || m.getName().equals("writeToTerminal")) {
+                        writeMethod = m;
+                        m.setAccessible(true);
+                        break;
+                    }
+                }
+
+                if (writeMethod == null) {
+                    Toast.makeText(TermuxActivity.this, "无法写入终端命令", Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                // 自动输入 su
+                writeMethod.invoke(session, "su\n");
+
+                // 检测授权（通过读取 TerminalSession 输出）
+                Handler handler = new Handler(Looper.getMainLooper());
+                handler.postDelayed(() -> {
+                    String output = session.getEmulator().getScreen().getTranscriptText();
+                    if (output != null && output.contains("uid=0")) {
+                        try {
+                            writeMethod.invoke(session, "exec " + elfPath + "\n");
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                        }
+                    } else {
+                        handler.postDelayed(this, 500); // 继续检测
+                    }
+                }, 500);
+
             } catch (Exception e) {
-                final String msg = (e.getMessage() != null ? e.getMessage() : e.toString());
-                runOnUiThread(() -> Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + msg, Toast.LENGTH_LONG).show());
+                Toast.makeText(TermuxActivity.this, "启动失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         });
-    } else {
-        finishActivityIfNotFinishing();
     }
-
-    mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
