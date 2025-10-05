@@ -428,79 +428,72 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
     TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
         if (mTermuxService == null) return;
 
+        // 放到后台线程做 I/O 和权限
         new Thread(() -> {
             try {
-                // ========== 检测 root 是否可用 ==========
-                boolean hasRoot = false;
-                try {
-                    Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "id"});
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    InputStream is = p.getInputStream();
-                    byte[] buf = new byte[256];
-                    int len;
-                    while ((len = is.read(buf)) > 0) baos.write(buf, 0, len);
-                    p.waitFor();
-                    String out = baos.toString();
-                    if (out.contains("uid=0")) hasRoot = true;
-                } catch (Exception ignored) {}
-
-                if (!hasRoot) {
-                    runOnUiThread(() ->
-                            Toast.makeText(TermuxActivity.this,
-                                    "未检测到 Root，请授权 su 权限后再试。",
-                                    Toast.LENGTH_LONG).show());
-                    return;
-                }
-
-                // ========== 准备 ELF 文件 ==========
+                // 1) 确保 ELF 在 files 目录
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
                 if (!elfFile.exists()) {
                     try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                          FileOutputStream out = new FileOutputStream(elfFile)) {
-                        byte[] buffer = new byte[8192];
+                        byte[] buf = new byte[8192];
                         int n;
-                        while ((n = in.read(buffer)) > 0)
-                            out.write(buffer, 0, n);
+                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
                     }
                 }
 
-                // 设置执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
+                // 2) 赋权
+                Runtime.getRuntime()
+                        .exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()})
+                        .waitFor();
                 if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
 
-                // ========== 构建命令 & 环境变量 ==========
-                String elfPath = elfFile.getAbsolutePath();
-                String[] args = new String[]{"-c", "exec su -c '" + elfPath + "'"};
-                String[] env = new String[]{
+                // 3) 组装环境
+                final String elfPath = elfFile.getAbsolutePath();
+                final String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
                         "HOME=" + getFilesDir().getAbsolutePath(),
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // ========== 创建会话 ==========
-                TerminalSession session = new TerminalSession(
-                        "/system/bin/sh",                      // Shell
-                        getFilesDir().getAbsolutePath(),       // 工作目录
-                        args,                                  // 参数
-                        env,                                   // 环境变量
-                        null,
-                        mTermuxTerminalSessionActivityClient
-                );
-
-                // 切回主线程绑定会话显示输出
+                // 4) 回到主线程：创建 TerminalSession（必须在主线程，否则 Looper 异常）
                 runOnUiThread(() -> {
-                    mTermuxTerminalSessionActivityClient.setCurrentSession(session);
-                    Toast.makeText(TermuxActivity.this, "Root 已授权，正在启动 ELF ...", Toast.LENGTH_SHORT).show();
+                    try {
+                        // 你手动能跑通的是：su -c "/data/data/com.termux/files/AndroidSurfaceImguiEnhanced"
+                        String[] args = new String[]{
+                                "-c",
+                                "exec su -c '" + elfPath + "'"   // 用 exec 替换 shell 进程
+                        };
+
+                        TerminalSession session = new TerminalSession(
+                                "/system/bin/sh",                      // shell
+                                getFilesDir().getAbsolutePath(),       // 工作目录
+                                args,                                   // 参数
+                                env,                                    // 环境变量
+                                null,
+                                mTermuxTerminalSessionActivityClient
+                        );
+
+                        // 让输出显示到 Termux 窗口
+                        mTermuxTerminalSessionActivityClient.setCurrentSession(session);
+
+                        // （可选）延时删除 ELF
+                        new Thread(() -> {
+                            try { Thread.sleep(8000); } catch (InterruptedException ignored) {}
+                            // 如需保留 ELF，删掉下一行
+                            // elfFile.delete();
+                        }).start();
+
+                    } catch (Exception e) {
+                        Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + e.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
                 });
 
-                // ========== 启动后延时删除 ELF ==========
-                Thread.sleep(8000);
-                elfFile.delete();
-
             } catch (Exception e) {
-                String msg = e.getMessage() == null ? e.toString() : e.getMessage();
                 runOnUiThread(() ->
-                        Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + msg, Toast.LENGTH_LONG).show());
+                        Toast.makeText(TermuxActivity.this, "准备 ELF 失败: " + e.getMessage(),
+                                Toast.LENGTH_LONG).show());
             }
         }).start();
     });
