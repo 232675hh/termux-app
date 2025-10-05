@@ -58,6 +58,9 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.InputStream;
 import java.lang.Thread;
+import java.util.concurrent.Callable;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 import com.termux.R;
 import com.termux.app.api.file.FileReceiverActivity;
