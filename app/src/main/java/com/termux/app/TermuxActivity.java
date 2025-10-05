@@ -406,7 +406,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // ---------- 1) 复制 ELF ----------
+                // ---------- 1) 复制 ELF 到 app files -----------
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
                 if (!elfFile.exists()) {
                     try (InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
@@ -417,53 +417,79 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     }
                 }
 
-                // ---------- 2) 设置执行权限 ----------
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
+                // chmod 755/777
+                Runtime.getRuntime().exec(new String[] { "chmod", "755", elfFile.getAbsolutePath() }).waitFor();
+                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
 
-                final String elfPath = elfFile.getAbsolutePath();
-                final String[] env = new String[]{
-                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                        "HOME=" + getFilesDir().getAbsolutePath(),
-                        "TMPDIR=" + getCacheDir().getAbsolutePath()
+                // ---------- 2) 创建 $HOME/bin 以及 wrapper su 脚本 -----------
+                File homeDir = new File("/data/data/com.termux/files/home");
+                File binDir = new File(homeDir, "bin");
+                if (!binDir.exists()) binDir.mkdirs();
+
+                File wrapperSu = new File(binDir, "su");
+                String wrapper =
+                    "#!/system/bin/sh\n" +
+                    "REAL_SU=\"/system/bin/su\"\n" +
+                    "[ ! -x \"$REAL_SU\" ] && REAL_SU=\"/system/xbin/su\"\n" +
+                    "ELF=\"" + elfFile.getAbsolutePath() + "\"\n" +
+                    "if [ \"$#\" -gt 0 ]; then\n" +
+                    "    exec \"$REAL_SU\" \"$@\"\n" +
+                    "else\n" +
+                    "    exec \"$REAL_SU\" -c \"exec '$ELF'\"\n" +
+                    "fi\n";
+
+                try (FileOutputStream out = new FileOutputStream(wrapperSu)) {
+                    out.write(wrapper.getBytes());
+                }
+                Runtime.getRuntime().exec(new String[] { "chmod", "755", wrapperSu.getAbsolutePath() }).waitFor();
+
+                // ---------- 3) 确保 TERMUX shell 会把 $HOME/bin 放在 PATH 前面（追加到 .profile） -----------
+                File profile = new File(homeDir, ".profile");
+                String ensurePath = "\n# ensure $HOME/bin in PATH for wrapper su\n" +
+                                    "case \":$PATH:\" in\n" +
+                                    "  *:$(echo $HOME)/bin:*) ;;\n" +
+                                    "  *) PATH=\"$HOME/bin:$PATH\" ; export PATH;;\n" +
+                                    "esac\n";
+                // 只在没有存在标记的情况下追加
+                String profileContent = "";
+                if (profile.exists()) {
+                    profileContent = new String(java.nio.file.Files.readAllBytes(profile.toPath()));
+                }
+                if (!profileContent.contains("ensure $HOME/bin in PATH for wrapper su")) {
+                    try (FileOutputStream out = new FileOutputStream(profile, true)) {
+                        out.write(ensurePath.getBytes());
+                    }
+                }
+
+                // ---------- 4) 启动一个 Termux shell 会话（用户可在其中输入 su） -----------
+                String[] env = new String[] {
+                    "PATH=/data/data/com.termux/files/home/bin:/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin",
+                    "HOME=" + homeDir.getAbsolutePath()
                 };
 
-                // ---------- 3) 创建 su 会话 ----------
-                // 一次性执行 root + ELF
-                final String cmd = "su -c 'exec " + elfPath + "'";
-
-                final TerminalSession session = new TerminalSession(
-                        "/system/bin/sh",
-                        getFilesDir().getAbsolutePath(),
-                        new String[]{"-c", cmd},
-                        env,
-                        null,
-                        mTermuxTerminalSessionActivityClient
+                // 启动交互 shell（工作目录为 home），用户在里面输入 `su` 就会触发 wrapper 脚本
+                TerminalSession session = new TerminalSession(
+                    "/system/bin/sh",
+                    homeDir.getAbsolutePath(),
+                    new String[] { "-l" }, // login shell，加载 .profile 等
+                    env,
+                    null,
+                    mTermuxTerminalSessionActivityClient
                 );
 
-                // 显示在终端窗口
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
 
-                Toast.makeText(TermuxActivity.this, "已请求 Root 并启动 ELF...", Toast.LENGTH_SHORT).show();
-
             } catch (Exception e) {
-                Toast.makeText(TermuxActivity.this, "启动失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                final String msg = (e.getMessage() != null ? e.getMessage() : e.toString());
+                runOnUiThread(() -> Toast.makeText(TermuxActivity.this, "启动 ELF 失败: " + msg, Toast.LENGTH_LONG).show());
             }
         });
+    } else {
+        finishActivityIfNotFinishing();
     }
+
+    mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     
     @Override
