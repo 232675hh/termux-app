@@ -413,11 +413,9 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // === 1. 复制 ELF 到 Termux home ===
-                File homeDir = new File("/data/data/com.termux/files/home");
-                if (!homeDir.exists()) homeDir.mkdirs();
+                File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-                File elfFile = new File(homeDir, "AndroidSurfaceImguiEnhanced");
+                // 复制 assets 中的 ELF
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -428,52 +426,35 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // === 2. 给权限 ===
-                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
-                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
+                // 授权可执行
+                Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
 
-                // === 3. 准备环境变量 ===
-                String[] env = new String[]{
-                        "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
-                        "HOME=" + homeDir.getAbsolutePath(),
-                        "TMPDIR=" + getCacheDir().getAbsolutePath()
-                };
+                // === 用 su 执行 ===
+                new Thread(() -> {
+                    try {
+                        Process p = Runtime.getRuntime().exec(new String[]{
+                            "su", "-c", elfFile.getAbsolutePath()
+                        });
 
-                // === 4. 直接进入 su（交互式）===
-                // 注意：这等效于你在 Termux 手动输入 su
-                TerminalSession suSession = new TerminalSession(
-                        "su",                         // 直接运行 su
-                        homeDir.getAbsolutePath(),    // 工作目录
-                        new String[]{},               // 不带参数
-                        env,                          // 环境变量
-                        null,
-                        mTermuxTerminalSessionActivityClient
-                );
+                        BufferedReader r = new BufferedReader(
+                            new InputStreamReader(p.getInputStream()));
+                        String line;
+                        while ((line = r.readLine()) != null)
+                            Log.d("TermuxELF", line);
 
-                // 显示 root 会话
-                mTermuxTerminalSessionActivityClient.setCurrentSession(suSession);
-                mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
-
-                // 提示用户（如果需要授权，会自动弹 su 权限框）
-                runOnUiThread(() -> Toast.makeText(
-                        TermuxActivity.this,
-                        "正在进入 root shell，请在弹窗中允许 su 授权",
-                        Toast.LENGTH_LONG
-                ).show());
+                        p.waitFor();
+                    } catch (Exception e) {
+                        Log.e("TermuxELF", "执行失败", e);
+                    }
+                }).start();
 
             } catch (Exception e) {
-                e.printStackTrace();
-                runOnUiThread(() -> Toast.makeText(
-                        TermuxActivity.this,
-                        "启动 su 失败: " + e.getMessage(),
-                        Toast.LENGTH_LONG
-                ).show());
+                Log.e("TermuxELF", "ELF 启动异常", e);
             }
         });
-    } else {
-        finishActivityIfNotFinishing();
     }
 }
+
 
 
 
