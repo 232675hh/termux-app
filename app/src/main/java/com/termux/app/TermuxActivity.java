@@ -429,15 +429,31 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 if (!binDir.exists()) binDir.mkdirs();
 
                 File wrapperSu = new File(binDir, "su");
+
+                // 改进的 wrapper 脚本：支持自定义 su
                 String wrapper =
                     "#!/system/bin/sh\n" +
-                    "REAL_SU=\"/system/bin/su\"\n" +
-                    "[ ! -x \"$REAL_SU\" ] && REAL_SU=\"/system/xbin/su\"\n" +
+                    "REAL_SU=\"\"\n" +
+                    "for p in /system/bin/su /system/xbin/su; do\n" +
+                    "    [ -x \"$p\" ] && REAL_SU=\"$p\" && break\n" +
+                    "done\n" +
+                    "if [ -z \"$REAL_SU\" ]; then\n" +
+                    "    echo \"[!] 未找到 su 可执行文件，请手动输入 su 路径:\"\n" +
+                    "    while true; do\n" +
+                    "        read -p '输入 su 路径: ' user_su\n" +
+                    "        if [ -x \"$user_su\" ]; then\n" +
+                    "            REAL_SU=\"$user_su\"\n" +
+                    "            break\n" +
+                    "        else\n" +
+                    "            echo \"[-] 无效路径，请重新输入。\"\n" +
+                    "        fi\n" +
+                    "    done\n" +
+                    "fi\n" +
                     "ELF=\"" + elfFile.getAbsolutePath() + "\"\n" +
                     "if [ \"$#\" -gt 0 ]; then\n" +
                     "    exec \"$REAL_SU\" \"$@\"\n" +
                     "else\n" +
-                    "    exec \"$REAL_SU\" -c \"exec '$ELF'\"\n" +   // 不删除 ELF
+                    "    exec \"$REAL_SU\" -c \"exec '$ELF'\"\n" +
                     "fi\n";
 
                 try (FileOutputStream out = new FileOutputStream(wrapperSu)) {
@@ -445,7 +461,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 }
                 Runtime.getRuntime().exec(new String[]{"chmod", "755", wrapperSu.getAbsolutePath()}).waitFor();
 
-                // ---------- 3) 确保 TERMUX shell 会把 $HOME/bin 放在 PATH 前面（追加到 .profile） -----------
+                // ---------- 3) 确保 PATH 中包含 $HOME/bin -----------
                 File profile = new File(homeDir, ".profile");
                 String ensurePath = "\n# ensure $HOME/bin in PATH for wrapper su\n" +
                                     "case \":$PATH:\" in\n" +
@@ -464,19 +480,19 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     }
                 }
 
-                // ---------- 4) 启动一个 Termux shell 会话（用户在里面输入 su 并授权） -----------
-                String[] env = new String[] {
+                // ---------- 4) 启动 Termux Shell ----------
+                String[] env = new String[]{
                     "PATH=" + binDir.getAbsolutePath() + ":/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin",
                     "HOME=" + homeDir.getAbsolutePath()
                 };
 
                 TerminalSession session = new TerminalSession(
-                    "/system/bin/sh",
-                    homeDir.getAbsolutePath(),
-                    new String[] { "-l" }, // login shell，加载 .profile 等
-                    env,
-                    null,
-                    mTermuxTerminalSessionActivityClient
+                        "/system/bin/sh",
+                        homeDir.getAbsolutePath(),
+                        new String[]{"-l"},
+                        env,
+                        null,
+                        mTermuxTerminalSessionActivityClient
                 );
 
                 mTermuxTerminalSessionActivityClient.setCurrentSession(session);
@@ -492,6 +508,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
 
     mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
     
