@@ -415,7 +415,7 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             try {
                 File elfFile = new File(getFilesDir(), "AndroidSurfaceImguiEnhanced");
 
-                // 复制 assets 中的 ELF
+                // 如果 ELF 不存在，从 assets 复制
                 if (!elfFile.exists()) {
                     InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
@@ -429,20 +429,50 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                 // 授权可执行
                 Runtime.getRuntime().exec("chmod 777 " + elfFile.getAbsolutePath()).waitFor();
 
-                // === 用 su 执行 ===
+                // === 用 su 执行并保持完整 I/O 通道 ===
                 new Thread(() -> {
                     try {
-                        Process p = Runtime.getRuntime().exec(new String[]{
-                            "su", "-c", elfFile.getAbsolutePath()
-                        });
+                        // 关键：继承标准输入输出，不分行读取
+                        String cmd = "su -c \"exec " + elfFile.getAbsolutePath() + " <&0 >&1 2>&1\"";
 
-                        BufferedReader r = new BufferedReader(
-                            new InputStreamReader(p.getInputStream()));
-                        String line;
-                        while ((line = r.readLine()) != null)
-                            Log.d("TermuxELF", line);
+                        ProcessBuilder pb = new ProcessBuilder("sh", "-c", cmd);
+                        pb.directory(getFilesDir());
+                        pb.redirectErrorStream(true);
+                        Process p = pb.start();
+
+                        InputStream inStream = p.getInputStream();
+                        OutputStream outStream = p.getOutputStream();
+
+                        // 创建线程持续读取 ELF 输出（原始字节方式，支持动态刷新）
+                        Thread outputThread = new Thread(() -> {
+                            try {
+                                byte[] buffer = new byte[1024];
+                                int len;
+                                while ((len = inStream.read(buffer)) != -1) {
+                                    System.out.write(buffer, 0, len);
+                                    System.out.flush(); // 保证即时刷新
+                                }
+                            } catch (Exception e) {
+                                Log.e("TermuxELF", "读取输出失败", e);
+                            }
+                        });
+                        outputThread.start();
+
+                        // 可选：将 Termux 用户输入转发到 ELF（实时交互）
+                        new Thread(() -> {
+                            try {
+                                InputStream termuxIn = System.in;
+                                byte[] ibuf = new byte[128];
+                                int n;
+                                while ((n = termuxIn.read(ibuf)) > 0) {
+                                    outStream.write(ibuf, 0, n);
+                                    outStream.flush();
+                                }
+                            } catch (Exception ignored) {}
+                        }).start();
 
                         p.waitFor();
+
                     } catch (Exception e) {
                         Log.e("TermuxELF", "执行失败", e);
                     }
