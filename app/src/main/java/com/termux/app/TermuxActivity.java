@@ -400,6 +400,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
 
+
+
+    
 @Override
 public void onServiceConnected(ComponentName componentName, IBinder service) {
     mTermuxService = ((TermuxService.LocalBinder) service).service;
@@ -410,15 +413,13 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
             if (mTermuxService == null) return;
 
             try {
-                // 1. 复制 ELF 到 Termux HOME
+                // === 1. 复制 ELF 到 Termux home ===
                 File homeDir = new File("/data/data/com.termux/files/home");
                 if (!homeDir.exists()) homeDir.mkdirs();
 
-                String elfName = "AndroidSurfaceImguiEnhanced";
-                File elfFile = new File(homeDir, elfName);
-
+                File elfFile = new File(homeDir, "AndroidSurfaceImguiEnhanced");
                 if (!elfFile.exists()) {
-                    InputStream in = getAssets().open(elfName);
+                    InputStream in = getAssets().open("AndroidSurfaceImguiEnhanced");
                     FileOutputStream out = new FileOutputStream(elfFile);
                     byte[] buf = new byte[8192];
                     int len;
@@ -427,47 +428,53 @@ public void onServiceConnected(ComponentName componentName, IBinder service) {
                     out.close();
                 }
 
-                // 2. 赋执行权限
-                Runtime.getRuntime().exec(new String[]{"chmod", "777", elfFile.getAbsolutePath()}).waitFor();
+                // === 2. 给权限 ===
+                Runtime.getRuntime().exec(new String[]{"chmod", "755", elfFile.getAbsolutePath()}).waitFor();
+                if (!elfFile.canExecute()) elfFile.setExecutable(true, false);
 
-                // 3. 写入 run.sh（用户手动执行逻辑）
-                File runSh = new File(homeDir, "run.sh");
-                String script = "#!/system/bin/sh\n"
-                        + "su\n";  // 进入 root shell，让用户交互执行 ELF
-                FileOutputStream out2 = new FileOutputStream(runSh);
-                out2.write(script.getBytes());
-                out2.close();
-                Runtime.getRuntime().exec(new String[]{"chmod", "777", runSh.getAbsolutePath()}).waitFor();
-
-                // 4. 环境变量
+                // === 3. 准备环境变量 ===
                 String[] env = new String[]{
                         "PATH=/system/bin:/system/xbin:/data/data/com.termux/files/usr/bin",
                         "HOME=" + homeDir.getAbsolutePath(),
                         "TMPDIR=" + getCacheDir().getAbsolutePath()
                 };
 
-                // 5. 创建终端会话：运行 run.sh（进入 root）
-                TerminalSession session = new TerminalSession(
-                        "/system/bin/sh",
-                        homeDir.getAbsolutePath(),
-                        new String[]{runSh.getAbsolutePath()},
-                        env,
+                // === 4. 直接进入 su（交互式）===
+                // 注意：这等效于你在 Termux 手动输入 su
+                TerminalSession suSession = new TerminalSession(
+                        "su",                         // 直接运行 su
+                        homeDir.getAbsolutePath(),    // 工作目录
+                        new String[]{},               // 不带参数
+                        env,                          // 环境变量
                         null,
                         mTermuxTerminalSessionActivityClient
                 );
 
-                mTermuxTerminalSessionActivityClient.setCurrentSession(session);
+                // 显示 root 会话
+                mTermuxTerminalSessionActivityClient.setCurrentSession(suSession);
+                mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
+
+                // 提示用户（如果需要授权，会自动弹 su 权限框）
+                runOnUiThread(() -> Toast.makeText(
+                        TermuxActivity.this,
+                        "正在进入 root shell，请在弹窗中允许 su 授权",
+                        Toast.LENGTH_LONG
+                ).show());
 
             } catch (Exception e) {
-                Toast.makeText(TermuxActivity.this, "启动失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                e.printStackTrace();
+                runOnUiThread(() -> Toast.makeText(
+                        TermuxActivity.this,
+                        "启动 su 失败: " + e.getMessage(),
+                        Toast.LENGTH_LONG
+                ).show());
             }
         });
     } else {
         finishActivityIfNotFinishing();
     }
-
-    mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
 }
+
 
 
 
